@@ -1,120 +1,166 @@
-class LinkedInExtractor {
+class LinkedInRecentHiresExtractor {
   constructor() {
     this.isRunning = false;
     this.currentPage = 1;
+    this.maxPagesPerFilter = 30;
     this.extractedLeads = [];
-    this.apiEndpoint = 'https://linkedin-lead-system-production.up.railway.app/api'; // Will update after Railway deploy
+    this.processedFilters = new Set();
+    this.dailyEmailTarget = 100;
+    this.validEmailsFound = 0;
+    this.apiEndpoint = 'https://linkedin-lead-system-production.up.railway.app/api';
+    
+    // Track current filters
+    this.currentFilters = {
+      companySize: null,
+      location: null,
+      seniority: null,
+      yearsInCompany: 'Less than 1 year'
+    };
   }
 
-  async start(maxPages = 10) {
+  async start(emailTarget = 100) {
     if (this.isRunning) return;
     
+    this.dailyEmailTarget = emailTarget;
     this.isRunning = true;
-    this.currentPage = 1;
-    this.extractedLeads = [];
+    this.validEmailsFound = 0;
     
-    console.log('🚀 Starting LinkedIn extraction...');
+    console.log(`🎯 Starting extraction for recently hired employees`);
+    console.log(`📧 Target: ${this.dailyEmailTarget} verified emails`);
     
-    try {
-      while (this.currentPage <= maxPages && this.isRunning) {
-        console.log(`📄 Processing page ${this.currentPage}/${maxPages}...`);
-        
-        await this.waitForResults();
-        const leads = this.extractFromPage();
-        
-        if (leads.length > 0) {
-          this.extractedLeads.push(...leads);
-          console.log(`✅ Found ${leads.length} leads on page ${this.currentPage}`);
-          
-          // Send batch to backend
-          await this.sendToBackend(leads);
-          
-          // Update popup
-          chrome.runtime.sendMessage({
-            type: 'progress',
-            currentPage: this.currentPage,
-            totalLeads: this.extractedLeads.length
-          });
-        } else {
-          console.log('⚠️ No leads found on this page');
-        }
-        
-        // Go to next page
-        if (this.currentPage < maxPages) {
-          const hasNext = await this.nextPage();
-          if (!hasNext) {
-            console.log('📭 No more pages available');
-            break;
-          }
-        }
-        
-        this.currentPage++;
+    // Load processed filters
+    const stored = await chrome.storage.local.get(['processedFilters']);
+    this.processedFilters = new Set(stored.processedFilters || []);
+    
+    // Extract with current filters
+    await this.extractWithCurrentFilters();
+    
+    this.isRunning = false;
+    console.log(`✅ Complete! ${this.validEmailsFound} emails found`);
+  }
+
+  async extractWithCurrentFilters() {
+    let totalPagesExtracted = 0;
+    
+    while (this.isRunning && totalPagesExtracted < this.maxPagesPerFilter) {
+      console.log(`📄 Page ${totalPagesExtracted + 1}/${this.maxPagesPerFilter}`);
+      
+      // Wait for results
+      await this.waitForResults();
+      
+      // Extract leads from current page
+      const leads = this.extractFromPage();
+      
+      if (leads.length === 0) {
+        console.log('No more leads found');
+        break;
       }
       
-      console.log(`✅ Extraction complete! Total: ${this.extractedLeads.length} leads`);
-      
-      chrome.runtime.sendMessage({
-        type: 'complete',
-        totalLeads: this.extractedLeads.length
+      // Mark as recently hired
+      leads.forEach(lead => {
+        lead.recentlyHired = true;
+        lead.filterUsed = this.getCurrentFilterString();
       });
       
-    } catch (error) {
-      console.error('❌ Extraction error:', error);
-      chrome.runtime.sendMessage({
-        type: 'error',
-        message: error.message
-      });
-    } finally {
-      this.isRunning = false;
+      // Send to backend
+      await this.sendToBackend(leads);
+      
+      // Update progress
+      await this.checkProgress();
+      
+      // Check if we reached target
+      if (this.validEmailsFound >= this.dailyEmailTarget) {
+        console.log(`✅ Target reached: ${this.validEmailsFound} emails`);
+        break;
+      }
+      
+      // Go to next page
+      const hasNext = await this.nextPage();
+      if (!hasNext) break;
+      
+      totalPagesExtracted++;
+      
+      // Wait between pages
+      await this.delay(4000);
     }
+    
+    // Save processed filter
+    this.processedFilters.add(this.getCurrentFilterString());
+    await chrome.storage.local.set({ 
+      processedFilters: Array.from(this.processedFilters) 
+    });
   }
-  
+
+  getCurrentFilterString() {
+    // Read current filters from the page
+    const filterElements = document.querySelectorAll('.search-reusables__filter-pill-button');
+    const filters = [];
+    filterElements.forEach(el => {
+      filters.push(el.textContent.trim());
+    });
+    return filters.join('|');
+  }
+
   async waitForResults() {
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       const results = document.querySelectorAll('[data-view-name="search-entity-result"]');
       if (results.length > 0) {
         await this.delay(2000);
-        return;
+        return true;
       }
       await this.delay(500);
     }
     throw new Error('Results did not load');
   }
-  
+
   extractFromPage() {
     const leads = [];
     const elements = document.querySelectorAll('[data-view-name="search-entity-result"]');
     
     elements.forEach((el, idx) => {
       try {
-        // Extract name
+        // Check if "Recently hired" badge is present
+        const recentlyHiredBadge = el.querySelector('[aria-label*="Recently hired"]');
+        
+        // Extract basic info
         const nameEl = el.querySelector('.artdeco-entity-lockup__title a span[aria-hidden="true"]');
         const name = nameEl?.textContent?.trim();
         
-        // Extract title
         const titleEl = el.querySelector('.artdeco-entity-lockup__subtitle span[aria-hidden="true"]');
         const title = titleEl?.textContent?.trim();
         
-        // Extract company
         const companyEl = el.querySelector('.artdeco-entity-lockup__caption span[aria-hidden="true"]');
-        const company = companyEl?.textContent?.trim();
+        let company = companyEl?.textContent?.trim() || '';
+        company = company.split('·')[0].trim();
         
-        // Extract location
         const locationEl = el.querySelector('.artdeco-entity-lockup__meta span[aria-hidden="true"]');
         const location = locationEl?.textContent?.trim();
         
-        // Extract profile URL
         const linkEl = el.querySelector('.artdeco-entity-lockup__title a');
         const profileUrl = linkEl?.href;
+        
+        // Extract time in role/company
+        const fullText = el.textContent;
+        let timeInRole = '';
+        let timeAtCompany = '';
+        
+        const roleMatch = fullText.match(/(\d+\s+months?\s+in\s+role)/);
+        if (roleMatch) timeInRole = roleMatch[1];
+        
+        const companyMatch = fullText.match(/(\d+\s+months?\s+in\s+company)/);
+        if (companyMatch) timeAtCompany = companyMatch[1];
         
         if (name && title && company) {
           leads.push({
             id: `${Date.now()}_${idx}`,
             name,
             title,
-            company: company.replace(' · ', '').split(' · ')[0],
+            company,
             location: location || '',
             profileUrl: profileUrl || '',
+            timeInRole,
+            timeAtCompany,
+            hasRecentlyHiredBadge: !!recentlyHiredBadge,
             extractedAt: new Date().toISOString()
           });
         }
@@ -125,7 +171,7 @@ class LinkedInExtractor {
     
     return leads;
   }
-  
+
   async nextPage() {
     try {
       const nextBtn = document.querySelector('.artdeco-pagination__button--next:not([disabled])');
@@ -138,7 +184,7 @@ class LinkedInExtractor {
       return false;
     }
   }
-  
+
   async sendToBackend(leads) {
     try {
       const response = await fetch(`${this.apiEndpoint}/leads/batch`, {
@@ -149,27 +195,46 @@ class LinkedInExtractor {
       
       const result = await response.json();
       console.log(`📤 Sent ${leads.length} leads to backend:`, result);
+      
+      // Update message to popup
+      chrome.runtime.sendMessage({
+        type: 'batch_sent',
+        count: leads.length
+      });
+      
       return result;
     } catch (error) {
       console.error('Backend error:', error);
-      // Store locally if backend is down
-      this.storeLocally(leads);
+      // Store locally for retry
+      const stored = await chrome.storage.local.get(['failedLeads']);
+      const failed = stored.failedLeads || [];
+      failed.push(...leads);
+      await chrome.storage.local.set({ failedLeads: failed });
     }
   }
-  
-  storeLocally(leads) {
-    chrome.storage.local.get(['failedLeads'], (result) => {
-      const existing = result.failedLeads || [];
-      existing.push(...leads);
-      chrome.storage.local.set({ failedLeads: existing });
-      console.log(`💾 Stored ${leads.length} leads locally for retry`);
-    });
+
+  async checkProgress() {
+    try {
+      const response = await fetch(`${this.apiEndpoint}/leads/stats`);
+      const stats = await response.json();
+      this.validEmailsFound = stats.verifiedEmails || 0;
+      
+      console.log(`📊 Progress: ${this.validEmailsFound}/${this.dailyEmailTarget} emails`);
+      
+      chrome.runtime.sendMessage({
+        type: 'progress_update',
+        validEmails: this.validEmailsFound,
+        target: this.dailyEmailTarget
+      });
+    } catch (error) {
+      console.error('Error checking progress:', error);
+    }
   }
-  
+
   delay(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
-  
+
   stop() {
     this.isRunning = false;
     console.log('🛑 Extraction stopped');
@@ -177,13 +242,13 @@ class LinkedInExtractor {
 }
 
 // Initialize extractor
-const extractor = new LinkedInExtractor();
+const extractor = new LinkedInRecentHiresExtractor();
 
 // Message handler
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'start':
-      extractor.start(message.maxPages);
+      extractor.start(message.maxPages || 100);
       sendResponse({ status: 'started' });
       break;
     case 'stop':
@@ -193,8 +258,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'status':
       sendResponse({
         isRunning: extractor.isRunning,
-        currentPage: extractor.currentPage,
-        totalLeads: extractor.extractedLeads.length
+        validEmailsFound: extractor.validEmailsFound,
+        target: extractor.dailyEmailTarget
       });
       break;
     case 'updateEndpoint':
@@ -205,4 +270,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-console.log('✅ LinkedIn Lead Extractor loaded and ready!');
+console.log('✅ LinkedIn Recent Hires Extractor loaded!');
