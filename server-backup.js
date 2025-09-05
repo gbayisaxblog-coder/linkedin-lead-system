@@ -40,6 +40,11 @@ const leadSchema = new mongoose.Schema({
   processedAt: Date,
   verifiedAt: Date,
   hash: { type: String, unique: true, required: true }
+  recentlyHired: { type: Boolean, default: false },
+  timeInRole: String,
+  timeAtCompany: String,
+  extractionFilter: Object,
+  filterHash: String,
 });
 
 const companySchema = new mongoose.Schema({
@@ -153,17 +158,225 @@ app.get('/api/leads/stats', async (req, res) => {
 });
 
 app.get('/api/export/csv', async (req, res) => {
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
   try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+  try {
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     const leads = await Lead.find({ emailVerified: true }).sort('-extractedAt');
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     let csv = 'Name,Title,Company,Location,Email,Domain,Profile URL,Extracted Date\n';
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     leads.forEach(lead => {
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
       csv += `"${lead.name}","${lead.title}","${lead.company}","${lead.location || ''}","${lead.emailAddress}","${lead.companyDomain || ''}","${lead.profileUrl || ''}","${new Date(lead.extractedAt).toLocaleDateString()}"\n`;
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     });
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     res.setHeader('Content-Type', 'text/csv');
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     res.setHeader('Content-Disposition', `attachment; filename=linkedin_leads_${Date.now()}.csv`);
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
     res.send(csv);
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+  } catch (error) {
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+    res.status(500).json({ error: error.message });
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+  }
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+});
+
+
+app.get("/api/leads/recent-hires", async (req, res) => {
+  try {
+    const recentHires = await Lead.find({ 
+      recentlyHired: true,
+      emailVerified: true 
+    }).sort("-extractedAt");
+    res.json(recentHires);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

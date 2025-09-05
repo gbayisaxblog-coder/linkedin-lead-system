@@ -160,13 +160,17 @@ app.get('/api/leads/stats', async (req, res) => {
 app.get('/api/export/csv', async (req, res) => {
 
 
-app.get("/api/leads/recent-hires", async (req, res) => {
+app.get('/api/leads/recent-hires', async (req, res) => {
   try {
     const recentHires = await Lead.find({ 
       recentlyHired: true,
       emailVerified: true 
-    }).sort("-extractedAt");
-    res.json(recentHires);
+    }).sort('-extractedAt').limit(1000);
+    
+    res.json({
+      count: recentHires.length,
+      leads: recentHires
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
