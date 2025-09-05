@@ -1,47 +1,33 @@
-// Load saved endpoint
-chrome.storage.local.get(['apiEndpoint'], (result) => {
-  if (result.apiEndpoint) {
-    document.getElementById('apiEndpoint').value = result.apiEndpoint;
-  }
+// Pre-filled API URL
+const API_URL = 'https://linkedin-lead-system-production.up.railway.app';
+
+// On popup load
+document.addEventListener('DOMContentLoaded', () => {
+  // Set default values
+  document.getElementById('apiEndpoint').value = API_URL;
+  document.getElementById('emailTarget').value = '100';
 });
 
 // Start extraction
 document.getElementById('startBtn').addEventListener('click', async () => {
-  const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
-  const maxPages = parseInt(document.getElementById('maxPages').value) || 5;
+  const emailTarget = parseInt(document.getElementById('emailTarget').value) || 100;
   
-  if (!apiEndpoint) {
-    showMessage('Please enter your Railway API URL', 'error');
-    return;
-  }
-  
-  // Save endpoint
-  chrome.storage.local.set({ apiEndpoint });
-  
-  // Check if on LinkedIn
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  
   if (!tab.url.includes('linkedin.com')) {
-    showMessage('Please navigate to LinkedIn Sales Navigator first', 'error');
+    alert('Please navigate to LinkedIn Sales Navigator first');
     return;
   }
   
-  // Update endpoint in content script
-  await chrome.tabs.sendMessage(tab.id, {
-    type: 'updateEndpoint',
-    endpoint: apiEndpoint.replace(/\/+$/, '') + '/api'
-  });
-  
-  // Start extraction
+  // Send start message with email target
   chrome.tabs.sendMessage(tab.id, {
     type: 'start',
-    maxPages
+    emailTarget: emailTarget
   });
   
   document.getElementById('startBtn').disabled = true;
   document.getElementById('stopBtn').disabled = false;
-  document.getElementById('progressBar').style.display = 'block';
-  showMessage(`Starting extraction of ${maxPages} pages...`, 'info');
-  updateStatus('Extracting...', '-', '0');
+  document.getElementById('statusText').textContent = `Extracting... Target: ${emailTarget} emails`;
 });
 
 // Stop extraction
@@ -51,118 +37,50 @@ document.getElementById('stopBtn').addEventListener('click', async () => {
   
   document.getElementById('startBtn').disabled = false;
   document.getElementById('stopBtn').disabled = true;
-  showMessage('Extraction stopped', 'info');
-  updateStatus('Stopped', '-', '-');
-});
-
-// View stats
-document.getElementById('statsBtn').addEventListener('click', async () => {
-  const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
-  
-  if (!apiEndpoint) {
-    showMessage('Please enter your Railway API URL first', 'error');
-    return;
-  }
-  
-  try {
-    const response = await fetch(`${apiEndpoint.replace(/\/+$/, '')}/api/leads/stats`);
-    const stats = await response.json();
-    
-    document.getElementById('statsContent').innerHTML = `
-      <div class="status-row">
-        <span class="status-label">Total Leads:</span>
-        <span class="status-value">${stats.totalLeads}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">Verified Emails:</span>
-        <span class="status-value">${stats.verifiedEmails}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">Pending:</span>
-        <span class="status-value">${stats.pendingLeads}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">Companies:</span>
-        <span class="status-value">${stats.totalCompanies}</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">Conversion Rate:</span>
-        <span class="status-value">${stats.conversionRate}%</span>
-      </div>
-      <div class="status-row">
-        <span class="status-label">API Cost:</span>
-        <span class="status-value">$${(stats.totalCost || 0).toFixed(3)}</span>
-      </div>
-    `;
-    
-    document.getElementById('statsDisplay').style.display = 'block';
-  } catch (error) {
-    showMessage('Failed to fetch stats: ' + error.message, 'error');
-  }
+  document.getElementById('statusText').textContent = 'Stopped';
 });
 
 // Export CSV
-document.getElementById('exportBtn').addEventListener('click', async () => {
-  const apiEndpoint = document.getElementById('apiEndpoint').value.trim();
-  
-  if (!apiEndpoint) {
-    showMessage('Please enter your Railway API URL first', 'error');
-    return;
-  }
-  
+document.getElementById('exportBtn').addEventListener('click', () => {
+  window.open(`${API_URL}/api/export/csv`, '_blank');
+});
+
+// Check stats
+document.getElementById('statsBtn').addEventListener('click', async () => {
   try {
-    showMessage('Generating CSV export...', 'info');
-    
-    const response = await fetch(`${apiEndpoint.replace(/\/+$/, '')}/api/export/csv`);
-    const blob = await response.blob();
-    
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `linkedin_leads_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    
-    showMessage('CSV downloaded successfully!', 'success');
+    const response = await fetch(`${API_URL}/api/leads/stats`);
+    const stats = await response.json();
+    document.getElementById('statsText').textContent = 
+      `Leads: ${stats.totalLeads} | Emails: ${stats.verifiedEmails} | Cost: $${(stats.totalCost || 0).toFixed(2)}`;
   } catch (error) {
-    showMessage('Export failed: ' + error.message, 'error');
+    document.getElementById('statsText').textContent = 'Error loading stats';
   }
 });
 
-// Message handler
+// Clear history button (optional)
+if (document.getElementById('clearBtn')) {
+  document.getElementById('clearBtn').addEventListener('click', async () => {
+    if (confirm('Clear duplicate history? This will allow re-extraction of previous filters.')) {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      chrome.tabs.sendMessage(tab.id, { type: 'clear_history' });
+      alert('History cleared');
+    }
+  });
+}
+
+// Listen for progress updates
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === 'progress') {
-    const progress = (message.currentPage / 10) * 100;
-    document.getElementById('progressFill').style.width = `${progress}%`;
-    updateStatus('Extracting...', message.currentPage, message.totalLeads);
-    showMessage(`Page ${message.currentPage}: Found ${message.totalLeads} leads`, 'info');
+    document.getElementById('statusText').textContent = 
+      `Page ${message.currentPage} - ${message.totalLeads} leads extracted`;
   } else if (message.type === 'complete') {
     document.getElementById('startBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
-    document.getElementById('progressFill').style.width = '100%';
-    updateStatus('Complete', '-', message.totalLeads);
-    showMessage(`✅ Extraction complete! ${message.totalLeads} leads found. Processing emails...`, 'success');
+    document.getElementById('statusText').textContent = 
+      `Complete! ${message.totalLeads} new leads found`;
   } else if (message.type === 'error') {
     document.getElementById('startBtn').disabled = false;
     document.getElementById('stopBtn').disabled = true;
-    updateStatus('Error', '-', '-');
-    showMessage('Error: ' + message.message, 'error');
+    document.getElementById('statusText').textContent = `Error: ${message.message}`;
   }
 });
-
-function updateStatus(status, page, leads) {
-  document.getElementById('statusText').textContent = status;
-  document.getElementById('currentPage').textContent = page;
-  document.getElementById('totalLeads').textContent = leads;
-}
-
-function showMessage(text, type) {
-  const messageEl = document.getElementById('message');
-  messageEl.textContent = text;
-  messageEl.className = `message ${type}`;
-  
-  if (type !== 'error') {
-    setTimeout(() => {
-      messageEl.className = 'message';
-    }, 5000);
-  }
-}

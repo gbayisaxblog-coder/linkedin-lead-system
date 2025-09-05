@@ -1,104 +1,173 @@
-class LinkedInRecentHiresExtractor {
+class LinkedInExtractor {
   constructor() {
     this.isRunning = false;
     this.currentPage = 1;
-    this.maxPagesPerFilter = 30;
+    this.maxPagesPerSession = 30;
     this.extractedLeads = [];
-    this.processedFilters = new Set();
     this.dailyEmailTarget = 100;
     this.validEmailsFound = 0;
     this.apiEndpoint = 'https://linkedin-lead-system-production.up.railway.app/api';
-    
-    // Track current filters
-    this.currentFilters = {
-      companySize: null,
-      location: null,
-      seniority: null,
-      yearsInCompany: 'Less than 1 year'
-    };
+    this.currentFilterHash = '';
   }
 
   async start(emailTarget = 100) {
-    if (this.isRunning) return;
+    if (this.isRunning) {
+      console.log('Already running!');
+      return;
+    }
     
     this.dailyEmailTarget = emailTarget;
     this.isRunning = true;
-    this.validEmailsFound = 0;
+    this.currentPage = 1;
+    this.extractedLeads = [];
     
-    console.log(`🎯 Starting extraction for recently hired employees`);
+    // Get current filter state to avoid duplicates
+    this.currentFilterHash = this.getCurrentFilterHash();
+    
+    console.log('🚀 Starting extraction');
     console.log(`📧 Target: ${this.dailyEmailTarget} verified emails`);
+    console.log(`🔍 Filter hash: ${this.currentFilterHash}`);
     
-    // Load processed filters
-    const stored = await chrome.storage.local.get(['processedFilters']);
-    this.processedFilters = new Set(stored.processedFilters || []);
-    
-    // Extract with current filters
-    await this.extractWithCurrentFilters();
-    
-    this.isRunning = false;
-    console.log(`✅ Complete! ${this.validEmailsFound} emails found`);
-  }
-
-  async extractWithCurrentFilters() {
-    let totalPagesExtracted = 0;
-    
-    while (this.isRunning && totalPagesExtracted < this.maxPagesPerFilter) {
-      console.log(`📄 Page ${totalPagesExtracted + 1}/${this.maxPagesPerFilter}`);
-      
-      // Wait for results
-      await this.waitForResults();
-      
-      // Extract leads from current page
-      const leads = this.extractFromPage();
-      
-      if (leads.length === 0) {
-        console.log('No more leads found');
-        break;
-      }
-      
-      // Mark as recently hired
-      leads.forEach(lead => {
-        lead.recentlyHired = true;
-        lead.filterUsed = this.getCurrentFilterString();
-      });
-      
-      // Send to backend
-      await this.sendToBackend(leads);
-      
-      // Update progress
-      await this.checkProgress();
-      
-      // Check if we reached target
-      if (this.validEmailsFound >= this.dailyEmailTarget) {
-        console.log(`✅ Target reached: ${this.validEmailsFound} emails`);
-        break;
-      }
-      
-      // Go to next page
-      const hasNext = await this.nextPage();
-      if (!hasNext) break;
-      
-      totalPagesExtracted++;
-      
-      // Wait between pages
-      await this.delay(4000);
+    // Check if this filter was already processed
+    const processed = await this.wasFilterProcessed(this.currentFilterHash);
+    if (processed) {
+      alert('This filter combination was already extracted. Please change at least one filter.');
+      this.isRunning = false;
+      return;
     }
     
-    // Save processed filter
-    this.processedFilters.add(this.getCurrentFilterString());
-    await chrome.storage.local.set({ 
-      processedFilters: Array.from(this.processedFilters) 
-    });
+    try {
+      // Extract up to 30 pages
+      for (let page = 1; page <= this.maxPagesPerSession && this.isRunning; page++) {
+        console.log(`📄 Page ${page}/${this.maxPagesPerSession}`);
+        
+        await this.waitForResults();
+        const leads = this.extractFromPage();
+        
+        if (leads.length === 0) {
+          console.log('No more leads found');
+          break;
+        }
+        
+        console.log(`Found ${leads.length} leads`);
+        
+        // Check for duplicates before sending
+        const newLeads = await this.filterDuplicates(leads);
+        console.log(`${newLeads.length} are new (not duplicates)`);
+        
+        if (newLeads.length > 0) {
+          await this.sendToBackend(newLeads);
+          this.extractedLeads.push(...newLeads);
+        }
+        
+        // Update progress
+        chrome.runtime.sendMessage({
+          type: 'progress',
+          currentPage: page,
+          totalLeads: this.extractedLeads.length
+        });
+        
+        // Check email target
+        await this.checkProgress();
+        if (this.validEmailsFound >= this.dailyEmailTarget) {
+          console.log('✅ Email target reached!');
+          break;
+        }
+        
+        // Next page
+        if (page < this.maxPagesPerSession) {
+          const hasNext = await this.nextPage();
+          if (!hasNext) break;
+          await this.delay(4000);
+        }
+      }
+      
+      // Mark filter as processed
+      await this.markFilterProcessed(this.currentFilterHash);
+      
+      console.log(`✅ Complete! Extracted ${this.extractedLeads.length} new leads`);
+      
+      chrome.runtime.sendMessage({
+        type: 'complete',
+        totalLeads: this.extractedLeads.length,
+        validEmails: this.validEmailsFound
+      });
+      
+    } catch (error) {
+      console.error('❌ Error:', error);
+      chrome.runtime.sendMessage({
+        type: 'error',
+        message: error.message
+      });
+    } finally {
+      this.isRunning = false;
+    }
   }
 
-  getCurrentFilterString() {
-    // Read current filters from the page
-    const filterElements = document.querySelectorAll('.search-reusables__filter-pill-button');
+  getCurrentFilterHash() {
+    // Create unique hash from current filters
     const filters = [];
-    filterElements.forEach(el => {
-      filters.push(el.textContent.trim());
+    
+    // Get all active filter pills
+    document.querySelectorAll('.search-reusables__filter-pill-button').forEach(pill => {
+      filters.push(pill.textContent.trim());
     });
-    return filters.join('|');
+    
+    // Get search keywords if any
+    const searchBox = document.querySelector('input[placeholder*="Search"]');
+    if (searchBox?.value) {
+      filters.push(`search:${searchBox.value}`);
+    }
+    
+    // Sort and join for consistent hash
+    return filters.sort().join('|');
+  }
+
+  async wasFilterProcessed(filterHash) {
+    const stored = await chrome.storage.local.get(['processedFilters']);
+    const processed = stored.processedFilters || [];
+    return processed.includes(filterHash);
+  }
+
+  async markFilterProcessed(filterHash) {
+    const stored = await chrome.storage.local.get(['processedFilters']);
+    const processed = stored.processedFilters || [];
+    if (!processed.includes(filterHash)) {
+      processed.push(filterHash);
+      await chrome.storage.local.set({ 
+        processedFilters: processed,
+        lastProcessed: new Date().toISOString()
+      });
+    }
+  }
+
+  async filterDuplicates(leads) {
+    // Get existing lead hashes from storage
+    const stored = await chrome.storage.local.get(['leadHashes']);
+    const existingHashes = new Set(stored.leadHashes || []);
+    
+    const newLeads = [];
+    const newHashes = [];
+    
+    for (const lead of leads) {
+      // Create unique hash for each lead
+      const hash = `${lead.name}|${lead.company}|${lead.title}`.toLowerCase();
+      
+      if (!existingHashes.has(hash)) {
+        newLeads.push(lead);
+        newHashes.push(hash);
+        existingHashes.add(hash);
+      }
+    }
+    
+    // Update stored hashes
+    if (newHashes.length > 0) {
+      await chrome.storage.local.set({ 
+        leadHashes: Array.from(existingHashes)
+      });
+    }
+    
+    return newLeads;
   }
 
   async waitForResults() {
@@ -106,7 +175,7 @@ class LinkedInRecentHiresExtractor {
       const results = document.querySelectorAll('[data-view-name="search-entity-result"]');
       if (results.length > 0) {
         await this.delay(2000);
-        return true;
+        return;
       }
       await this.delay(500);
     }
@@ -119,10 +188,6 @@ class LinkedInRecentHiresExtractor {
     
     elements.forEach((el, idx) => {
       try {
-        // Check if "Recently hired" badge is present
-        const recentlyHiredBadge = el.querySelector('[aria-label*="Recently hired"]');
-        
-        // Extract basic info
         const nameEl = el.querySelector('.artdeco-entity-lockup__title a span[aria-hidden="true"]');
         const name = nameEl?.textContent?.trim();
         
@@ -139,16 +204,24 @@ class LinkedInRecentHiresExtractor {
         const linkEl = el.querySelector('.artdeco-entity-lockup__title a');
         const profileUrl = linkEl?.href;
         
-        // Extract time in role/company
+        // Extract time in role
         const fullText = el.textContent;
         let timeInRole = '';
         let timeAtCompany = '';
         
-        const roleMatch = fullText.match(/(\d+\s+months?\s+in\s+role)/);
-        if (roleMatch) timeInRole = roleMatch[1];
+        if (fullText.includes('month') && fullText.includes('in role')) {
+          const match = fullText.match(/(\d+\s+months?\s+in\s+role)/);
+          if (match) timeInRole = match[1];
+        }
         
-        const companyMatch = fullText.match(/(\d+\s+months?\s+in\s+company)/);
-        if (companyMatch) timeAtCompany = companyMatch[1];
+        if (fullText.includes('month') && fullText.includes('in company')) {
+          const match = fullText.match(/(\d+\s+months?\s+in\s+company)/);
+          if (match) timeAtCompany = match[1];
+        }
+        
+        // Check for recently hired badge
+        const recentlyHired = el.querySelector('[aria-label*="Recently hired"]') !== null ||
+                             (timeInRole.includes('month') && parseInt(timeInRole) < 12);
         
         if (name && title && company) {
           leads.push({
@@ -160,8 +233,9 @@ class LinkedInRecentHiresExtractor {
             profileUrl: profileUrl || '',
             timeInRole,
             timeAtCompany,
-            hasRecentlyHiredBadge: !!recentlyHiredBadge,
-            extractedAt: new Date().toISOString()
+            recentlyHired,
+            extractedAt: new Date().toISOString(),
+            filterHash: this.currentFilterHash
           });
         }
       } catch (err) {
@@ -173,16 +247,12 @@ class LinkedInRecentHiresExtractor {
   }
 
   async nextPage() {
-    try {
-      const nextBtn = document.querySelector('.artdeco-pagination__button--next:not([disabled])');
-      if (!nextBtn) return false;
-      
-      nextBtn.click();
-      await this.delay(3000);
-      return true;
-    } catch (error) {
-      return false;
-    }
+    const nextBtn = document.querySelector('.artdeco-pagination__button--next:not([disabled])');
+    if (!nextBtn) return false;
+    
+    nextBtn.click();
+    await this.delay(3000);
+    return true;
   }
 
   async sendToBackend(leads) {
@@ -194,22 +264,10 @@ class LinkedInRecentHiresExtractor {
       });
       
       const result = await response.json();
-      console.log(`📤 Sent ${leads.length} leads to backend:`, result);
-      
-      // Update message to popup
-      chrome.runtime.sendMessage({
-        type: 'batch_sent',
-        count: leads.length
-      });
-      
+      console.log(`📤 Sent ${leads.length} new leads to backend`);
       return result;
     } catch (error) {
       console.error('Backend error:', error);
-      // Store locally for retry
-      const stored = await chrome.storage.local.get(['failedLeads']);
-      const failed = stored.failedLeads || [];
-      failed.push(...leads);
-      await chrome.storage.local.set({ failedLeads: failed });
     }
   }
 
@@ -218,14 +276,7 @@ class LinkedInRecentHiresExtractor {
       const response = await fetch(`${this.apiEndpoint}/leads/stats`);
       const stats = await response.json();
       this.validEmailsFound = stats.verifiedEmails || 0;
-      
-      console.log(`📊 Progress: ${this.validEmailsFound}/${this.dailyEmailTarget} emails`);
-      
-      chrome.runtime.sendMessage({
-        type: 'progress_update',
-        validEmails: this.validEmailsFound,
-        target: this.dailyEmailTarget
-      });
+      console.log(`📊 Progress: ${this.validEmailsFound}/${this.dailyEmailTarget} emails verified`);
     } catch (error) {
       console.error('Error checking progress:', error);
     }
@@ -239,28 +290,28 @@ class LinkedInRecentHiresExtractor {
     this.isRunning = false;
     console.log('🛑 Extraction stopped');
   }
+
+  async clearDuplicateHistory() {
+    await chrome.storage.local.remove(['processedFilters', 'leadHashes']);
+    console.log('🧹 Cleared duplicate history');
+  }
 }
 
-// Initialize extractor
-const extractor = new LinkedInRecentHiresExtractor();
+const extractor = new LinkedInExtractor();
 
-// Message handler
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   switch (message.type) {
     case 'start':
-      extractor.start(message.maxPages || 100);
+      extractor.start(message.emailTarget || 100);
       sendResponse({ status: 'started' });
       break;
     case 'stop':
       extractor.stop();
       sendResponse({ status: 'stopped' });
       break;
-    case 'status':
-      sendResponse({
-        isRunning: extractor.isRunning,
-        validEmailsFound: extractor.validEmailsFound,
-        target: extractor.dailyEmailTarget
-      });
+    case 'clear_history':
+      extractor.clearDuplicateHistory();
+      sendResponse({ status: 'cleared' });
       break;
     case 'updateEndpoint':
       extractor.apiEndpoint = message.endpoint;
@@ -270,4 +321,4 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-console.log('✅ LinkedIn Recent Hires Extractor loaded!');
+console.log('✅ LinkedIn Extractor loaded - Manual filter, auto-extract, no duplicates!');
