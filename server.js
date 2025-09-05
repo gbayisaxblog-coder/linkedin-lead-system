@@ -39,12 +39,12 @@ const leadSchema = new mongoose.Schema({
   extractedAt: { type: Date, default: Date.now },
   processedAt: Date,
   verifiedAt: Date,
-  hash: { type: String, unique: true, required: true }
+  hash: { type: String, unique: true, required: true },  // <-- ADD COMMA HERE
   recentlyHired: { type: Boolean, default: false },
   timeInRole: String,
   timeAtCompany: String,
   extractionFilter: Object,
-  filterHash: String,
+  filterHash: String
 });
 
 const companySchema = new mongoose.Schema({
