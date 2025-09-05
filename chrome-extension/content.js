@@ -3,7 +3,7 @@ class LinkedInExtractor {
     this.isRunning = false;
     this.currentPage = 1;
     this.extractedLeads = [];
-    this.apiEndpoint = 'https://your-app.railway.app/api'; // Will update after Railway deploy
+    this.apiEndpoint = 'https://linkedin-lead-system-production.up.railway.app/api'; // Will update after Railway deploy
   }
 
   async start(maxPages = 10) {
